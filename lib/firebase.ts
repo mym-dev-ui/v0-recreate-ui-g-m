@@ -3,14 +3,14 @@ import { getFirestore, Firestore, doc, setDoc, updateDoc, arrayUnion } from "fir
 import { getDatabase, Database } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDpEWgXddbxLCN7fxwJXZ7hkWT2cSQsCT4",
-  authDomain: "newlinksa2-z-f-m.firebaseapp.com",
-  databaseURL: "https://newlinksa2-z-f-m-default-rtdb.firebaseio.com",
-  projectId: "newlinksa2-z-f-m",
-  storageBucket: "newlinksa2-z-f-m.firebasestorage.app",
-  messagingSenderId: "830706237619",
-  appId: "1:830706237619:web:aa22ca5fdfa7c52053f0c6",
-  measurementId: "G-0SVHJ7CQ4Y"
+  apiKey: "AIzaSyB-qlb_QYAPBqijr00XN-PeUd9DTzI0MDs",
+  authDomain: "taameeni-v1.firebaseapp.com",
+  databaseURL: "https://taameeni-v1-default-rtdb.firebaseio.com",
+  projectId: "taameeni-v1",
+  storageBucket: "taameeni-v1.firebasestorage.app",
+  messagingSenderId: "240999338900",
+  appId: "1:240999338900:web:bb73a1ea1239d2c074f581",
+  measurementId: "G-MP49WZ65T2"
 };
 
 let app: FirebaseApp | null = null;
